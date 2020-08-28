@@ -5,7 +5,7 @@ from modopt.signal.wavelet import filter_convolve
 
 def apply_transform(data, filters):
     """ Transform ``data`` through application of a set of filters.
-    
+
     Parameters
     ----------
     data: np.ndarray
@@ -24,7 +24,7 @@ def acc_sig_maps(shap_im,ker_stack,sig_est,flux_est,flux_ref,upfact,w,sig_data=N
         map_out[:,:,i] = acc_sig_map(shap_im,ker_stack,sig_est,flux_est,flux_ref,\
         upfact,w[i,:],sig_data=sig_data)
     return map_out
-    
+
 def acc_sig_map(shap_im,ker_stack,sig_est,flux_est,flux_ref,upfact,w,sig_data=None):
     """ Computes the square root of :math:`\mathcal{F}^{2*}(\hat\sigma^2)(A^\\top\odot A^\\top)`.
     See equation (27) in RCA paper.
@@ -44,7 +44,7 @@ def acc_sig_map(shap_im,ker_stack,sig_est,flux_est,flux_ref,upfact,w,sig_data=No
         transpose_decim(var_stack[:,:,l],upfact),ker_stack_in[:,:,l],mode='same')
     sigmap =  np.sqrt(map2)
     return sigmap
-    
+
 def return_neighbors(new_pos, obs_pos, vals, n_neighbors):
     """ Find the ``n_neighbors`` nearest neighbors."""
     distances = np.linalg.norm(obs_pos-new_pos, axis=1)
@@ -116,13 +116,13 @@ def SoftThresholding(data,thresh):
     thresh_data[belowmask] = 0.
     thresh_data[abovemask] = (data - np.sign(data)*thresh)[abovemask]
     return thresh_data
-    
+
 def HardThresholding(data,thresh):
     """ Performs element-wise hard thresholding."""
     thresh_data = np.copy(data)
     thresh_data[thresh_data < thresh] = 0.
     return thresh_data
-    
+
 def kthresholding(x,k):
     """ Applies k-thresholding (keep only ``k`` highest values, set rest to 0).
     """
@@ -140,17 +140,82 @@ def kthresholding(x,k):
 
 def lineskthresholding(mat,k):
     """ Applies k-thresholding to each line of input matrix.
-    
+
     Calls:
-    
+
     * :func:`utils.kthresholding`
-    
+
     """
     mat_out = np.copy(mat)
     shap = mat.shape
     for j in range(0,shap[0]):
         mat_out[j,:] = kthresholding(mat[j,:],k)
     return mat_out
+
+# [TL]
+def op_tobi_prox_l1(mat,k,kmax):
+    """ Applies GMCA-soft-thresholding to each line of input matrix.
+
+    Calls:
+
+    * :func:`utils.gmca_thresh`
+
+    """
+    mat_out = np.copy(mat)
+    shap = mat.shape
+    for j in range(0,shap[0]):
+        # GMCA-like threshold calculation
+        line = mat_out[j,:]
+        idx = np.floor(len(line)*np.max([0.9-(k/kmax)*3,0.2])).astype(int)
+        idx_thr = np.argsort(abs(line))[idx]
+        thresh = abs(line[idx_thr])
+
+        #thresh = np.max(mat_out[j,:])*np.max([0.9-(k/kmax)*3,0.2]) # Linear norm_inf decrease
+        # mat_out[j,:] = SoftThresholding(mat[j,:],thresh)
+        mat_out[j,:] = HardThresholding(mat_out[j,:],thresh)
+    return mat_out
+
+# [TL]
+def op_tobi_prox_elasticNet(mat,k,kmax):
+    """ Applies elasticNet to each line of input matrix.
+
+    Calls:
+
+    * :func:`utils.gmca_thresh`
+
+    """
+    mat_out = np.copy(mat)
+    shap = mat.shape
+    for j in range(0,shap[0]):
+        # GMCA-like threshold calculation
+        line = mat_out[j,:]
+        idx = np.floor(len(line)*np.max([0.95-(k/kmax)*3,0.2])).astype(int)
+        idx_thr = np.argsort(abs(line))[idx]
+        thresh = abs(line[idx_thr])
+
+        #thresh = np.max(mat_out[j,:])*np.max([0.9-(k/kmax)*3,0.2]) # Linear norm_inf decrease
+        # mat_out[j,:] = SoftThresholding(mat[j,:],thresh)
+        mat_out[j,:] = HardThresholding(mat_out[j,:],thresh)
+    return mat_out
+
+# [TL]
+def gmca_thresh(line,k):
+    """ Applies gmca-soft-thresholding. The lambda thresholding parameter decreases
+    by taking the subset of k biggest elements.
+    """
+
+    k = int(k)
+    if k<1:
+        print("Warning: wrong k value for k-thresholding")
+        k = 1
+    if k>len(x):
+        return x
+    else:
+        xout = np.copy(x)*0
+        ind = np.argsort(abs(x))
+        xout[ind[-k:]] = x[ind[-k:]]
+        return xout
+
 
 def mad(x, weight=None):
     """Computes MAD.
@@ -211,12 +276,16 @@ def lanczos(U,n=10,n2=None):
             H[i] = np.sinc(np.pi*(U-(i-n)))*np.sinc(np.pi*(U-(i-n))/n)
     return H
 
-def flux_estimate(im,cent=None,rad=4): # Default value for the flux tuned for Euclid PSF at Euclid resolution
+def flux_estimate(im,cent=None,rad=8): # [TL] changed rad 4 -> 8
+    # Default value for the flux tuned for Euclid PSF at Euclid resolution
     """Estimate flux for one image (see SPRITE paper, section 3.4.1., subsection 'Photometric flux').
     """
     flux = 0
     if cent is None:
-        cent = [max_coord[0] for max_coord in np.where(im==np.max(im))]
+        # cent = [max_coord[0] for max_coord in np.where(im==np.max(im))]
+        CE = CentroidEstimator(im, sig=15) # [JB] correction : new centroid estimation function
+        CE.estimate()
+        cent = [CE.xc, CE.yc]
     shap = im.shape
     for i in range(0,shap[0]):
         for j in range(0,shap[1]):
@@ -224,11 +293,11 @@ def flux_estimate(im,cent=None,rad=4): # Default value for the flux tuned for Eu
                 flux = flux+im[i,j]
     return flux
 
-def flux_estimate_stack(stack,cent=None,rad=4):
+def flux_estimate_stack(stack,cent=None,rad=8):  # [TL] changed rad 4 -> 8
     """Estimate flux for a bunch of images.
-    
+
     Calls:
-    
+
     * :func:`utils.flux_estimate`
     """
     shap = stack.shape
@@ -240,11 +309,12 @@ def flux_estimate_stack(stack,cent=None,rad=4):
             flux[i] = flux_estimate(stack[:,:,i],rad=rad)
     return flux
 
-def shift_ker_stack(shifts,upfact,lanc_rad=4):
+def shift_ker_stack(shifts,upfact,lanc_rad=8): # [TL] changed lanc_rad 4 -> 8
+    # [JB] maybe correction : lanc_rac = (4) -> 10 size of the shifting kernel
     """Generate shifting kernels and rotated shifting kernels.
-    
+
     Calls:
-    
+
     * :func:`utils.lanczos`
     """
     shap = shifts.shape
@@ -258,41 +328,43 @@ def shift_ker_stack(shifts,upfact,lanc_rad=4):
         shift_ker_stack_adj[:,:,i] = np.rot90(shift_ker_stack[:,:,i],2)
 
     return shift_ker_stack,shift_ker_stack_adj
-        
+
 def gen_Pea(distances, e, a):
     """ Computes :math:`P_{e,a}` matrix for given ``e``, ``a`` couple. See Equations (16-17)
     in RCA paper.
-    
+
     Parameters
     ----------
     distances: np.ndarray
         Array of pairwise distances
-    
+
     e: float
         Exponent to which the pairwise distances should be raised.
-    
+
     a: float
         Constant multiplier along Laplacian's diagonal.
     """
-    
+
+
     Pea = np.copy(distances**e)
     np.fill_diagonal(Pea, 1.)
-    Pea = -1./Pea**e
+    # Pea = -1./Pea**e # [TL] BUG -> Two times doing **e already done two lines above
+    Pea = -1./Pea
     for i in range(Pea.shape[0]):
         Pea[i,i] = a*(np.sum(-1.*Pea[i]) - 1.)
     return Pea
-    
+
 def select_vstar(eigenvects, R, weights):
     """  Pick best eigenvector from a set of :math:`(e,a)`, i.e., solve (35) from RCA paper.
-    
+
     Parameters
     ----------
     eigenvects: np.ndarray
         Array of eigenvects to be tested over.
-    
+
     R: np.ndarray
         :math:`R_i` matrix.
-        
+
     weights: np.ndarray
         Entry-wise weights for :math:`R_i`.
     """
@@ -307,12 +379,12 @@ def select_vstar(eigenvects, R, weights):
                 ea_idx = i
                 best_VT = np.copy(Pea_eigenvects)
     return ea_idx, eigen_idx, best_VT
-    
+
 class GraphBuilder(object):
     """ GraphBuilder.
-    
+
     This class computes the necessary quantities for RCA's graph constraint.
-    
+
     Parameters
     ----------
     obs_data: np.ndarray
@@ -354,17 +426,17 @@ class GraphBuilder(object):
         self.n_iter = n_iter
         self.ea_gridsize = ea_gridsize
         self.verbose = verbose
-        
+
         if distances is None:
             self.distances = pairwise_distances(self.obs_pos)
         else:
             self.distances = distances
         if auto_run:
             self._build_graphs()
-        
+
     def _build_graphs(self):
         """Computes graph-constraint related values, see RCA paper sections 5.2 and (especially) 5.5.3.
-            
+
         """
         shap = self.obs_data.shape
         e_max = self.pick_emax()
@@ -379,7 +451,7 @@ class GraphBuilder(object):
         self.sel_e = []
         idx = []
         list_eigenvects = []
-        for _ in range(self.n_comp): 
+        for _ in range(self.n_comp):
             e, a, j, best_VT = self.select_params(R, e_range, a_range)
             self.sel_e += [e]
             self.sel_a += [a]
@@ -394,7 +466,7 @@ class GraphBuilder(object):
         self.alpha = np.zeros((self.n_comp, self.VT.shape[0]))
         for i in range(self.n_comp):
             self.alpha[i, i*self.n_eigenvects+idx[i]] = 1
-        
+
     def pick_emax(self, epsilon=1e-15):
         """ Select maximum value of :math:`e` for the greedy search over set of
         :math:`(e,a)` couples, so that the graph is still fully connected.
@@ -404,10 +476,10 @@ class GraphBuilder(object):
         dist_ratios = np.min(nodiag,axis=1) / np.max(self.distances, axis=1)
         r_med = np.min(dist_ratios**2)
         return np.log(epsilon)/np.log(r_med)
-        
+
     def select_params(self, R, e_range, a_range):
         """ Selects :math:`(e,a)` parameters and best eigenvector for current :math:`R_i` matrix.
-        
+
         Parameters
         ----------
         R: np.ndarray
@@ -420,29 +492,29 @@ class GraphBuilder(object):
         current_a = 0.5
         for i in range(self.n_iter):
             # optimize over e
-            Peas = np.array([gen_Pea(self.distances, e, current_a) 
+            Peas = np.array([gen_Pea(self.distances, e, current_a)
                                                    for e in e_range])
             all_eigenvects = np.array([self.gen_eigenvects(Pea) for Pea in Peas])
             ea_idx, eigen_idx, _ = select_vstar(all_eigenvects, R, self.obs_weights)
             current_e = e_range[ea_idx]
-            
+
             # optimize over a
-            Peas = np.array([gen_Pea(self.distances, current_e, a) 
+            Peas = np.array([gen_Pea(self.distances, current_e, a)
                                                    for a in a_range])
             all_eigenvects = np.array([self.gen_eigenvects(Pea) for Pea in Peas])
             ea_idx, eigen_idx, best_VT = select_vstar(all_eigenvects, R, self.obs_weights)
             current_a = a_range[ea_idx]
 
         return current_e, current_a, eigen_idx, best_VT
-        
-    def gen_eigenvects(self, mat): 
+
+    def gen_eigenvects(self, mat):
         """ Computes input matrix's eigenvectors and keep the ``n_eigenvects`` associated with
         the smallest eigenvalues.
         """
         U, s, vT = np.linalg.svd(mat,full_matrices=True)
         vT = vT[-self.n_eigenvects:]
         return vT
-            
+
 class CentroidEstimator(object):
     """ Estimate intra-pixel shifts."""
     def __init__(self, im, sig=7.5, n_iter=5, auto_run=True,
@@ -461,13 +533,13 @@ class CentroidEstimator(object):
             self.yc = yc
         if auto_run:
             self.estimate()
-            
+
     def UpdateGrid(self):
         self.xx = np.outer(self.ranges[0] - self.xc,
                           np.ones(self.stamp_size[1]))
         self.yy = np.outer(np.ones(self.stamp_size[0]),
                           self.ranges[1] - self.yc)
-                          
+
     def EllipticalGaussian(self, e1=0, e2=0):
         """ Computes an elliptical 2D gaussian with arbitrary centroid."""
         # shear it
@@ -475,16 +547,16 @@ class CentroidEstimator(object):
         gyy = (1+e1)*self.yy - e2*self.xx
         # compute elliptical gaussian
         return np.exp(-(gxx ** 2 + gyy ** 2) / (2 * self.sig ** 2))
-        
+
     def ComputeMoments(self):
         Q0 = np.sum(self.im*self.window)
         Q1 = np.array([np.sum(np.sum(self.im * self.window, axis=1-i) * self.ranges[i])
                        for i in range(2)])
-        #Q2 = np.array([np.sum(self.im*self.window * self.xx**(2-i) * self.yy**i) 
+        #Q2 = np.array([np.sum(self.im*self.window * self.xx**(2-i) * self.yy**i)
         #               for i in range(3)])
         self.xc = Q1[0]/Q0
         self.yc = Q1[1]/Q0
-            
+
     def estimate(self):
         for _ in range(self.n_iter):
             self.UpdateGrid()
@@ -492,10 +564,8 @@ class CentroidEstimator(object):
             # Calculate weighted moments.
             self.ComputeMoments()
         return self.xc, self.yc
-        
+
     def return_shifts(self):
         """ Returns intra-pixel shifts, that is, the difference between the estimated centroid
         and the center of the stamp (or pixel grid)."""
         return [self.xc-self.xc0, self.yc-self.yc0]
-
-

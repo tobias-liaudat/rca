@@ -1,12 +1,12 @@
 from setuptools import setup
 
 setup(
-    name='rca',
-    version='2.0',
+    name='rca_or',
+    version='1.0',
     description='Resolved Component Analysis',
     author='Morgan A. Schmitz, Fred Ngole',
     author_email='morgan.schmitz@cea.fr',
     url='https://github.com/CosmoStat/rca',
-    packages=['rca'],
+    packages=['rca_or'],
     install_requires=['numpy','scipy','modopt']
 )
