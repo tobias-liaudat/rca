@@ -473,7 +473,7 @@ window of 7.5 pixels.''')
         else:
             return utils.reg_format(PSFs)
 
-    def validation_stars(self, test_stars, test_pos):
+    def validation_stars(self, test_stars, test_pos, upfact=None):
         """ Match PSF model to stars - in flux, shift and pixel sampling - for validation tests.
         Returns both the matched PSFs' stamps and chi-square value.
 
@@ -494,7 +494,8 @@ window of 7.5 pixels.''')
         test_shifts = np.array([ce.return_shifts() for ce in cents])
         test_fluxes = utils.flux_estimate_stack(test_stars,rad=4)
         matched_psfs = self.estimate_psf(test_pos, apply_degradation=True,
-                                    shifts=test_shifts, flux=test_fluxes)
+                                    shifts=test_shifts, flux=test_fluxes,
+                                    upfact=upfact)
         return matched_psfs
 
 
