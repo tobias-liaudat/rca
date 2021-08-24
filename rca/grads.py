@@ -6,10 +6,16 @@ from modopt.math.matrix import PowerMethod
 from modopt.signal.wavelet import filter_convolve
 import rca.utils as utils
 
-def degradation_op(X, shift_ker, D):
+def degradation_op(X, shift_ker, D, decim=True):
     """ Shift and decimate fine-grid image."""
-    return utils.decim(fftconvolve(X,shift_ker,mode='same'),
-                       D,av_en=0)
+    if decim:
+        return utils.decim(
+            fftconvolve(X, shift_ker, mode='same'), 
+            D,
+            av_en=0
+        )
+    else:
+        return fftconvolve(X, shift_ker, mode='same')
 
 def adjoint_degradation_op(x_i, shift_ker, D):
     """ Apply adjoint of the degradation operator."""
