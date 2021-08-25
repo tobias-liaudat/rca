@@ -287,12 +287,6 @@ window of 7.5 pixels.''')
         comp = self.S
         alpha = self.alpha
 
-        # [TL-test]
-        # Normalise weights
-        # weight_norms = np.sqrt(np.sum(weights**2,axis=1))
-        # weights /= weight_norms.reshape(-1,1)
-
-
         #### Source updates set-up ####
         # initialize dual variable and compute Starlet filters for Condat source updates
         dual_var = np.zeros((self.im_hr_shape))
@@ -360,12 +354,8 @@ window of 7.5 pixels.''')
                     reweighter.reweight(transf_comp)
                     thresholds = reweighter.weights
             else:
-                # source_optim = optimalg.Condat(transf_comp, dual_var, source_grad, sparsity_prox,
-                #                                Positivity(), linear = lin_recombine, cost=source_cost,
-                #                                max_iter=self.nb_subiter_S, tau=tau, sigma=sigma)
-                print('Fake positivity')
                 source_optim = optimalg.Condat(transf_comp, dual_var, source_grad, sparsity_prox,
-                                               rca_prox.PositivityFake(), linear = lin_recombine, cost=source_cost,
+                                               Positivity(), linear = lin_recombine, cost=source_cost,
                                                max_iter=self.nb_subiter_S, tau=tau, sigma=sigma)
 
                 transf_comp = source_optim.x_final
@@ -375,29 +365,25 @@ window of 7.5 pixels.''')
             #TODO: replace line below with Fred's component selection (to be extracted from `low_rank_global_src_est_comb`)
             ind_select = range(comp.shape[2])
 
-            print('No weight updates.')
-            # weights_k = alpha.dot(self.VT)
-
             #### Weight update ####
-            # if k < self.nb_iter-1:
-            #     # update sources and reset iteration counter for K-thresholding
-            #     weight_grad.update_S(comp)
-            #     coeff_prox.reset_iter()
-            #     weight_optim = optimalg.ForwardBackward(alpha, weight_grad, coeff_prox, cost=weight_cost,
-            #                                     beta_param=weight_grad.inv_spec_rad, auto_iterate=False)
-            #     weight_optim.iterate(max_iter=self.nb_subiter_weights)
-            #     alpha = weight_optim.x_final
-            #     weights_k = alpha.dot(self.VT)
-            #
-            #     # [TL] cancel normalization
-            #     print('No normalization of A.')
-            #     # renormalize to break scale invariance
-            #     weight_norms = np.sqrt(np.sum(weights_k**2,axis=1))
-            #     weights_k /= weight_norms.reshape(-1,1)
-            #     #TODO: replace line below with Fred's component selection
-            #     ind_select = range(weights.shape[0])
-            #     weights = weights_k[ind_select,:]
-            #     supports = None #TODO
+            if k < self.nb_iter-1:
+                # update sources and reset iteration counter for K-thresholding
+                weight_grad.update_S(comp)
+                coeff_prox.reset_iter()
+                weight_optim = optimalg.ForwardBackward(alpha, weight_grad, coeff_prox, cost=weight_cost,
+                                                beta_param=weight_grad.inv_spec_rad, auto_iterate=False)
+                weight_optim.iterate(max_iter=self.nb_subiter_weights)
+                alpha = weight_optim.x_final
+                weights_k = alpha.dot(self.VT)
+            
+                # [TL] cancel normalization
+                # renormalize to break scale invariance
+                weight_norms = np.sqrt(np.sum(weights_k**2,axis=1))
+                weights_k /= weight_norms.reshape(-1,1)
+                #TODO: replace line below with Fred's component selection
+                ind_select = range(weights.shape[0])
+                weights = weights_k[ind_select,:]
+                supports = None #TODO
 
         self.A = weights
         self.S = comp
