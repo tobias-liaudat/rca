@@ -446,7 +446,7 @@ class GraphBuilder(object):
                         e, a, j, self.n_eigenvects
                     )
                 )
-        self.VT = np.vstack((eigenvect for eigenvect in list_eigenvects))
+        self.VT = np.vstack([eigenvect for eigenvect in list_eigenvects])
         self.alpha = np.zeros((self.n_comp, self.VT.shape[0]))
         for i in range(self.n_comp):
             self.alpha[i, i * self.n_eigenvects + idx[i]] = 1
