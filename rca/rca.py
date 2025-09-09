@@ -1,7 +1,7 @@
 from __future__ import absolute_import, print_function
 import numpy as np
 from scipy.interpolate import Rbf
-from modopt.signal.wavelet import get_mr_filters, filter_convolve
+from modopt.signal.wavelet import filter_convolve
 from modopt.opt.cost import costObj
 from modopt.opt.proximity import Positivity
 from modopt.opt.reweight import cwbReweight
@@ -9,6 +9,30 @@ import modopt.opt.algorithms as optimalg
 import rca.proxs as rca_prox
 import rca.grads as grads
 import rca.utils as utils
+
+try:
+    from modopt.signal.wavelet import get_mr_filters
+
+    mr_filter_type = "modopt"
+    # Test filter
+    dummy_nscales = 3
+    dummy_opt = ["-t2", "-n{}".format(dummy_nscales)]
+    _ = get_mr_filters((32, 32), opt=dummy_opt, coarse=True, trim=False)
+
+except FileNotFoundError:
+    from mccd.mccd_utils import get_mr_filters
+
+    mr_filter_type = "mccd"
+    print(
+        "Warning: could not import get_mr_filters from modopt.signal.wavelet; using mccd.mccd_utils instead."
+    )
+    _ = get_mr_filters(
+        data_shape=(32, 32),
+        opt="BsplineWaveletTransformATrousAlgorithm",
+        n_scales=3,
+        coarse=True,
+        trim=False,
+    )
 
 
 def quickload(path):
@@ -73,7 +97,11 @@ class RCA(object):
 
         if filters is None:
             # option strings for mr_transform
-            self.opt = ["-t2", "-n{}".format(n_scales)]
+            if mr_filter_type == "modopt":
+                self.opt = ["-t2", "-n{}".format(n_scales)]
+            elif mr_filter_type == "mccd":
+                self.opt = "BsplineWaveletTransformATrousAlgorithm"
+                self.nscale_mccd = n_scales
             self.default_filters = True
         else:
             self.Phi_filters = filters
@@ -388,9 +416,18 @@ window of 7.5 pixels."""
         renormalizing observed data, so needs to be ran even if all three are provided.
         """
         if self.default_filters:
-            init_filters = get_mr_filters(
-                self.shap[:2], opt=self.opt, coarse=True, trim=False
-            )
+            if mr_filter_type == "modopt":
+                init_filters = get_mr_filters(
+                    self.shap[:2], opt=self.opt, coarse=True, trim=False
+                )
+            elif mr_filter_type == "mccd":
+                init_filters = get_mr_filters(
+                    self.shap[:2],
+                    opt=self.opt,
+                    n_scales=self.nscale_mccd,
+                    coarse=True,
+                    trim=False,
+                )
         else:
             init_filters = self.Phi_filters
         # noise levels
