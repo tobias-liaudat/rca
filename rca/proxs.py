@@ -6,6 +6,7 @@ import numpy as np
 from modopt.signal.noise import thresh
 from modopt.opt.linear import LinearParent
 from modopt.signal.wavelet import filter_convolve
+from modopt.opt.proximity import ProximityParent
 from rca.utils import (
     lineskthresholding,
     reg_format,
@@ -15,7 +16,7 @@ from rca.utils import (
 )
 
 
-class LinRecombine(object):
+class LinRecombine(ProximityParent):
     """Multiply eigenvectors and (factorized) weights."""
 
     def __init__(self, A, filters, compute_norm=False):
@@ -46,7 +47,7 @@ class LinRecombine(object):
             self.norm = np.sqrt(s[0])
 
 
-class KThreshold(object):
+class KThreshold(ProximityParent):
     """This class defines linewise hard-thresholding operator with variable thresholds.
 
     Parameters
@@ -74,7 +75,7 @@ class KThreshold(object):
         return 0
 
 
-class StarletThreshold(object):
+class StarletThreshold(ProximityParent):
     """Apply soft thresholding in Starlet domain.
 
     Parameters
@@ -104,3 +105,26 @@ class StarletThreshold(object):
 
     def cost(self, x, y):
         return 0  # TODO
+
+
+class PositivityFake(ProximityParent):
+    """Fake positivity.
+
+    Parameters
+    ----------
+    threshold: np.ndarray
+        Threshold levels.
+    thresh_type: str
+        Whether soft- or hard-thresholding should be used. Default is ``'soft'``.
+    """
+
+    def __init__(self, thresh_type="soft"):
+        self._thresh_type = thresh_type
+
+    def op(self, x, **kwargs):
+        """Applies Starlet transform and perform thresholding."""
+        # Threshold all scales but the coarse
+        return x
+
+    def cost(self, x, y):
+        return 0

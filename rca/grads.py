@@ -7,13 +7,19 @@ from modopt.signal.wavelet import filter_convolve
 import rca.utils as utils
 
 
-def degradation_op(X, shift_ker, D):
+def degradation_op(X, shift_ker, D, decim=True):
     """Shift and decimate fine-grid image."""
-    return utils.decim(fftconvolve(X, shift_ker, mode="same"), D, av_en=0)
+    if decim:
+        return utils.decim(fftconvolve(X, shift_ker, mode="same"), D, av_en=0)
+    else:
+        return fftconvolve(X, shift_ker, mode="same")
 
 
 def adjoint_degradation_op(x_i, shift_ker, D):
     """Apply adjoint of the degradation operator."""
+    return fftconvolve(utils.transpose_decim(x_i, D), shift_ker, mode="same")
+
+    """ Apply adjoint of the degradation operator."""
     return fftconvolve(utils.transpose_decim(x_i, D), shift_ker, mode="same")
 
 
@@ -43,8 +49,20 @@ class CoeffGrad(GradParent, PowerMethod):
     """
 
     def __init__(
-        self, data, weights, S, VT, flux, sig, ker, ker_rot, D, data_type="float"
+        self,
+        data,
+        weights,
+        S,
+        VT,
+        flux,
+        sig,
+        ker,
+        ker_rot,
+        D,
+        data_type=None,
+        verbose=True,
     ):
+        self.verbose = verbose
         self._grad_data_type = data_type
         self._input_data_writeable = False
         self.verbose = True
@@ -62,7 +80,12 @@ class CoeffGrad(GradParent, PowerMethod):
         PowerMethod.__init__(
             self, self.trans_op_op, (S.shape[-1], VT.shape[0]), auto_run=False
         )
+        PowerMethod.__init__(
+            self, self.trans_op_op, (S.shape[-1], VT.shape[0]), auto_run=False
+        )
         self.update_S(np.copy(S), update_spectral_radius=False)
+
+        self._current_rec = None  # stores latest application of self.MX
 
         self._current_rec = None  # stores latest application of self.MX
 
@@ -70,6 +93,16 @@ class CoeffGrad(GradParent, PowerMethod):
         """Update current eigenPSFs."""
         self.S = new_S
         # Apply degradation operator to components
+        normfacs = self.flux / (np.median(self.flux) * self.sig)
+        self.FdS = np.array(
+            [
+                [
+                    nf * degradation_op(S_j, shift_ker, self.D)
+                    for nf, shift_ker in zip(normfacs, utils.reg_format(self.ker))
+                ]
+                for S_j in utils.reg_format(self.S)
+            ]
+        )
         normfacs = self.flux / (np.median(self.flux) * self.sig)
         self.FdS = np.array(
             [
@@ -109,6 +142,9 @@ class CoeffGrad(GradParent, PowerMethod):
             Set of finer-grid images.
         """
         x = utils.reg_format(x)
+        STx = np.array([np.sum(FdS_i * x, axis=(1, 2)) for FdS_i in self.FdS])
+        return STx.dot(self.VT.T)  # aka... "V"
+
         STx = np.array([np.sum(FdS_i * x, axis=(1, 2)) for FdS_i in self.FdS])
         return STx.dot(self.VT.T)  # aka... "V"
 
@@ -157,8 +193,20 @@ class SourceGrad(GradParent, PowerMethod):
     """
 
     def __init__(
-        self, data, weights, A, flux, sig, ker, ker_rot, D, filters, data_type="float"
+        self,
+        data,
+        weights,
+        A,
+        flux,
+        sig,
+        ker,
+        ker_rot,
+        D,
+        filters,
+        data_type=None,
+        verbose=True,
     ):
+        self.verbose = verbose
         self._grad_data_type = data_type
         self._input_data_writeable = False
         self.verbose = True
@@ -174,6 +222,15 @@ class SourceGrad(GradParent, PowerMethod):
         self.D = D
         self.filters = filters
         # initialize Power Method to compute spectral radius
+        hr_shape = np.array(data.shape[:2]) * D
+        PowerMethod.__init__(
+            self,
+            self.trans_op_op,
+            (A.shape[0], filters.shape[0]) + tuple(hr_shape),
+            auto_run=False,
+        )
+
+        self._current_rec = None  # stores latest application of self.MX
         hr_shape = np.array(data.shape[:2]) * D
         PowerMethod.__init__(
             self,
@@ -220,6 +277,23 @@ class SourceGrad(GradParent, PowerMethod):
                 )
             ]
         )
+        normfacs = self.flux / (np.median(self.flux) * self.sig)
+        S = utils.rca_format(
+            np.array(
+                [
+                    filter_convolve(transf_Sj, self.filters, filter_rot=True)
+                    for transf_Sj in transf_S
+                ]
+            )
+        )
+        dec_rec = np.array(
+            [
+                nf * degradation_op(S.dot(A_i), shift_ker, self.D)
+                for nf, A_i, shift_ker in zip(
+                    normfacs, self.A.T, utils.reg_format(self.ker)
+                )
+            ]
+        )
         self._current_rec = utils.rca_format(dec_rec)
         return self._current_rec
 
@@ -227,6 +301,14 @@ class SourceGrad(GradParent, PowerMethod):
         """Adjoint to degradation operator :func:`MX`."""
         normfacs = self.flux / (np.median(self.flux) * self.sig)
         x = utils.reg_format(x)
+        upsamp_x = np.array(
+            [
+                nf * adjoint_degradation_op(x_i, shift_ker, self.D)
+                for nf, x_i, shift_ker in zip(
+                    normfacs, x, utils.reg_format(self.ker_rot)
+                )
+            ]
+        )
         upsamp_x = np.array(
             [
                 nf * adjoint_degradation_op(x_i, shift_ker, self.D)
