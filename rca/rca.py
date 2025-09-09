@@ -124,7 +124,7 @@ class RCA(object):
         shifts=None,
         sigs=None,
         psf_size=None,
-        psf_size_type="fwhm",
+        psf_size_type="R2",
         flux=None,
         nb_iter=2,
         nb_subiter_S=200,
@@ -190,7 +190,7 @@ class RCA(object):
         graph_kwargs: dictionary
             List of optional kwargs to be passed on to the :func:`utils.GraphBuilder`.
         """
-
+        print("Starting..")
         self.obs_data = np.copy(obs_data)
         self.shap = self.obs_data.shape
         self.im_hr_shape = (
@@ -284,111 +284,6 @@ class RCA(object):
         if path[-4:] != ".npy":
             path += ".npy"
         np.save(path, [RCA_params, fitted_model])
-
-    def estimate_psf(
-        self,
-        test_pos,
-        n_neighbors=15,
-        rbf_function="thin_plate",
-        apply_degradation=False,
-        shifts=None,
-        flux=None,
-        upfact=None,
-        rca_format=False,
-    ):
-        """Estimate and return PSF at desired positions.
-
-        Parameters
-        ----------
-        test_pos: np.ndarray
-            Positions where the PSF should be estimated. Should be in the same format (units,
-            etc.) as the ``obs_pos`` fed to :func:`RCA.fit`.
-        n_neighbors: int
-            Number of neighbors to use for RBF interpolation. Default is 15.
-        rbf_function: str
-            Type of RBF kernel to use. Default is ``'thin_plate'``.
-        apply_degradation: bool
-            Whether PSF model should be degraded (shifted and resampled on coarse grid),
-            for instance for comparison with stars. If True, expects shifts to be provided.
-            Default is False.
-        shifts: np.ndarray
-            Intra-pixel shifts to apply if ``apply_degradation`` is set to True.
-        flux: np.ndarray
-            Flux levels by which reconstructed PSF will be multiplied if provided. For comparison with
-            stars if ``apply_degradation`` is set to True.
-        upfact: int
-            Upsampling factor; default is None, in which case that of the RCA instance will be used.
-        rca_format: bool
-            If True, returns the PSF model in "rca" format, i.e. with axises
-            (n_pixels, n_pixels, n_stars). Otherwise, and by default, return them in
-            "regular" format, (n_stars, n_pixels, n_pixels).
-        """
-        if not self.is_fitted:
-            raise ValueError(
-                "RCA instance has not yet been fitted to observations. Please run\
-            the fit method."
-            )
-        if upfact is None:
-            upfact = self.upfact
-        ntest = test_pos.shape[0]
-        test_weights = np.empty((self.n_comp, ntest))
-        for j, pos in enumerate(test_pos):
-            # determine neighbors
-            nbs, pos_nbs = utils.return_neighbors(
-                pos, self.obs_pos, self.A.T, n_neighbors
-            )
-            # train RBF and interpolate for each component
-            for i in range(self.n_comp):
-                rbfi = Rbf(
-                    pos_nbs[:, 0], pos_nbs[:, 1], nbs[:, i], function=rbf_function
-                )
-                test_weights[i, j] = rbfi(pos[0], pos[1])
-        PSFs = self._transform(test_weights)
-        if apply_degradation:
-            shift_kernels, _ = utils.shift_ker_stack(shifts, self.upfact)
-            deg_PSFs = np.array(
-                [
-                    grads.degradation_op(PSFs[:, :, j], shift_kernels[:, :, j], upfact)
-                    for j in range(ntest)
-                ]
-            )
-            if flux is not None:
-                deg_PSFs *= flux.reshape(-1, 1, 1) / self.flux_ref
-            if rca_format:
-                return utils.rca_format(deg_PSFs)
-            else:
-                return deg_PSFs
-        elif rca_format:
-            return PSFs
-        else:
-            return utils.reg_format(PSFs)
-
-    def validation_stars(self, test_stars, test_pos):
-        """Match PSF model to stars - in flux, shift and pixel sampling - for validation tests.
-        Returns both the matched PSFs' stamps and chi-square value.
-
-        Parameters
-        ----------
-        test_stars: np.ndarray
-            Star stamps to be used for comparison with the PSF model. Should be in "rca" format,
-            i.e. with axises (n_pixels, n_pixels, n_stars).
-        test_pos: np.ndarray
-            Their corresponding positions.
-        """
-        if not self.is_fitted:
-            raise ValueError(
-                "RCA instance has not yet been fitted to observations. Please run\
-            the fit method."
-            )
-        cents = []
-        for star in utils.reg_format(test_stars):
-            cents += [utils.CentroidEstimator(star, sig=self.psf_size)]
-        test_shifts = np.array([ce.return_shifts() for ce in cents])
-        test_fluxes = utils.flux_estimate_stack(test_stars, rad=4)
-        matched_psfs = self.estimate_psf(
-            test_pos, apply_degradation=True, shifts=test_shifts, flux=test_fluxes
-        )
-        return matched_psfs
 
     def _set_psf_size(self, psf_size, psf_size_type):
         """Handles different "size" conventions."""
@@ -490,6 +385,7 @@ window of 7.5 pixels."""
         weights = self.A
         comp = self.S
         alpha = self.alpha
+
         #### Source updates set-up ####
         # initialize dual variable and compute Starlet filters for Condat source updates
         dual_var = np.zeros((self.im_hr_shape))
@@ -612,6 +508,7 @@ window of 7.5 pixels."""
                     tau=tau,
                     sigma=sigma,
                 )
+
                 transf_comp = source_optim.x_final
             comp = utils.rca_format(
                 np.array(
@@ -642,9 +539,9 @@ window of 7.5 pixels."""
                 alpha = weight_optim.x_final
                 weights_k = alpha.dot(self.VT)
 
+                # [TL] cancel normalization
                 # renormalize to break scale invariance
                 weight_norms = np.sqrt(np.sum(weights_k**2, axis=1))
-                # [TL]
                 weights_k /= weight_norms.reshape(-1, 1)
                 # TODO: replace line below with Fred's component selection
                 ind_select = range(weights.shape[0])
@@ -657,5 +554,176 @@ window of 7.5 pixels."""
         source_grad.MX(transf_comp)
         self.current_rec = source_grad._current_rec
 
+    def estimate_psf(
+        self,
+        test_pos,
+        n_neighbors=15,
+        rbf_function="thin_plate",
+        apply_degradation=False,
+        shifts=None,
+        flux=None,
+        upfact=None,
+        rca_format=False,
+        decim=True,
+    ):
+        """Estimate and return PSF at desired positions.
+
+        Parameters
+        ----------
+        test_pos: np.ndarray
+            Positions where the PSF should be estimated. Should be in the same format (units,
+            etc.) as the ``obs_pos`` fed to :func:`RCA.fit`.
+        n_neighbors: int
+            Number of neighbors to use for RBF interpolation. Default is 15.
+        rbf_function: str
+            Type of RBF kernel to use. Default is ``'thin_plate'``.
+        apply_degradation: bool
+            Whether PSF model should be degraded (shifted and resampled on coarse grid),
+            for instance for comparison with stars. If True, expects shifts to be provided.
+            Default is False.
+        shifts: np.ndarray
+            Intra-pixel shifts to apply if ``apply_degradation`` is set to True.
+        flux: np.ndarray
+            Flux levels by which reconstructed PSF will be multiplied if provided. For comparison with
+            stars if ``apply_degradation`` is set to True.
+        upfact: int
+            Upsampling factor; default is None, in which case that of the RCA instance will be used.
+        rca_format: bool
+            If True, returns the PSF model in "rca" format, i.e. with axises
+            (n_pixels, n_pixels, n_stars). Otherwise, and by default, return them in
+            "regular" format, (n_stars, n_pixels, n_pixels).
+        """
+        if not self.is_fitted:
+            raise ValueError(
+                "RCA instance has not yet been fitted to observations. Please run\
+            the fit method."
+            )
+        if upfact is None:
+            upfact = self.upfact
+        ntest = test_pos.shape[0]
+
+        test_weights = np.empty((self.n_comp, ntest))
+        for j, pos in enumerate(test_pos):
+            # determine neighbors
+            nbs, pos_nbs = utils.return_neighbors(
+                pos, self.obs_pos, self.A.T, n_neighbors
+            )
+            # train RBF and interpolate for each component
+            for i in range(self.n_comp):
+                rbfi = Rbf(
+                    pos_nbs[:, 0], pos_nbs[:, 1], nbs[:, i], function=rbf_function
+                )
+                test_weights[i, j] = rbfi(pos[0], pos[1])
+
+        # print('Polynomial interpolation')
+        # test_Pi = poly_pos(test_pos, max_degree=2, center_normalice=True,
+        #                 x_lims = None, y_lims = None)
+        # test_weights = self.alpha.dot(test_Pi)
+
+        PSFs = self._transform(test_weights)
+
+        if apply_degradation:
+            shift_kernels, _ = utils.shift_ker_stack(shifts, self.upfact)
+            deg_PSFs = np.array(
+                [
+                    grads.degradation_op(
+                        PSFs[:, :, j], shift_kernels[:, :, j], upfact, decim
+                    )
+                    for j in range(ntest)
+                ]
+            )
+            if flux is not None:
+                deg_PSFs *= flux.reshape(-1, 1, 1) / self.flux_ref
+            if rca_format:
+                return utils.rca_format(deg_PSFs)
+            else:
+                return deg_PSFs
+        elif rca_format:
+            return PSFs
+        else:
+            return utils.reg_format(PSFs)
+
+    def validation_stars(self, test_stars, test_pos, upfact=None, decim=True):
+        """Match PSF model to stars - in flux, shift and pixel sampling - for validation tests.
+        Returns both the matched PSFs' stamps and chi-square value.
+
+        Parameters
+        ----------
+        test_stars: np.ndarray
+            Star stamps to be used for comparison with the PSF model. Should be in "rca" format,
+            i.e. with axises (n_pixels, n_pixels, n_stars).
+        test_pos: np.ndarray
+            Their corresponding positions.
+        """
+        if not self.is_fitted:
+            raise ValueError(
+                "RCA instance has not yet been fitted to observations. Please run\
+            the fit method."
+            )
+        cents = []
+        for star in utils.reg_format(test_stars):
+            cents += [utils.CentroidEstimator(star, sig=self.psf_size)]
+        test_shifts = np.array([ce.return_shifts() for ce in cents])
+        test_fluxes = utils.flux_estimate_stack(test_stars, rad=4)
+        matched_psfs = self.estimate_psf(
+            test_pos,
+            apply_degradation=True,
+            shifts=test_shifts,
+            flux=test_fluxes,
+            upfact=upfact,
+            decim=decim,
+        )
+        return matched_psfs
+
     def _transform(self, A):
         return self.S.dot(A)
+
+
+def poly_pos(pos, max_degree=2, center_normalice=True, x_lims=None, y_lims=None):
+    r"""Construct polynomial matrix.
+
+    Return a matrix Pi containing polynomials of stars
+    positions up to ``max_degree``.
+
+    Defaulting to CFIS CCD limits.
+
+    New method:
+    The positions are scaled to the [-0.5, 0.5]x[-0.5, 0.5].
+    Then the polynomials are constructed with the normalized positions.
+
+    Old method:
+    Positions are centred, the polynomials are constructed.
+    Then the polynomials are normalized.
+
+    """
+    n_mono = (max_degree + 1) * (max_degree + 2) // 2
+    Pi = np.zeros((n_mono, pos.shape[0]))
+    _pos = np.copy(pos)
+
+    if x_lims is None:
+        x_min = np.min(_pos[:, 0])
+        x_max = np.max(_pos[:, 0])
+        x_lims = [x_min, x_max]
+        # print('x_lims: ', x_lims)
+
+    if y_lims is None:
+        y_min = np.min(_pos[:, 1])
+        y_max = np.max(_pos[:, 1])
+        y_lims = [y_min, y_max]
+        # print('y_lims: ', y_lims)
+
+    if center_normalice:
+        _pos[:, 0] = (_pos[:, 0] - x_lims[0]) / (x_lims[1] - x_lims[0]) - 1 / 2
+        _pos[:, 1] = (_pos[:, 1] - y_lims[0]) / (y_lims[1] - y_lims[0]) - 1 / 2
+
+    # print('min_x = ', np.min(_pos[:, 0]))
+    # print('max_x = ', np.max(_pos[:, 0]))
+    # print('min_y = ', np.min(_pos[:, 1]))
+    # print('max_y = ', np.max(_pos[:, 1]))
+
+    for d in range(max_degree + 1):
+        row_idx = d * (d + 1) // 2
+        for p in range(d + 1):
+            Pi[row_idx + p, :] = _pos[:, 0] ** (d - p) * _pos[:, 1] ** p
+
+    return Pi
